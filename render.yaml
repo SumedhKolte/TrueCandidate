@@ -19,7 +19,7 @@ services:
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
-        value: 3.12.7
+        value: 3.12.11
       - key: SUPABASE_URL
         sync: false          # set in the Render dashboard
       - key: SUPABASE_SERVICE_KEY
