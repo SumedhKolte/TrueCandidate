@@ -1,0 +1,32 @@
+# Render Blueprint — deploy the backend with "New +" -> "Blueprint".
+#
+# Sized for the FREE 512MB instance:
+#   * ONE uvicorn worker. The app is fully async (httpx pool + Groq SDK), so a
+#     single event loop handles many concurrent webhooks; extra workers would
+#     just duplicate the ~120MB Python baseline and split the per-session
+#     in-memory state (see app/state.py).
+#   * No ML libraries in the image — all inference is API-side (Groq), all
+#     aggregation is DB-side (Postgres trigger). That's what keeps this
+#     deployable on a hobby plan at all.
+services:
+  - type: web
+    name: sherlock-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: SUPABASE_URL
+        sync: false          # set in the Render dashboard
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: GROQ_TIMEOUT_S
+        value: "0.45"

@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>TrueCandidate Observer</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        width: 330px; margin: 0; padding: 16px;
+        background: #0e1626; color: #f4f6fb;
+        font: 400 13px system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      .brand { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+      .brand img { width: 22px; height: 22px; }
+      h1 { font-size: 14px; margin: 0; font-weight: 600; }
+      p.sub { margin: 0 0 14px; font-size: 11px; color: #7c8699; }
+      label { display: block; font-size: 10px; letter-spacing: .12em;
+              text-transform: uppercase; color: #7c8699; margin-bottom: 5px; }
+      input {
+        width: 100%; box-sizing: border-box; margin-bottom: 12px;
+        background: rgba(255,255,255,.04); color: #f4f6fb;
+        border: 1px solid rgba(255,255,255,.10); border-radius: 8px;
+        padding: 8px 10px; font: inherit; outline: none;
+      }
+      input:focus { border-color: rgba(57,135,229,.6); }
+      .hint { margin: -8px 0 12px; font-size: 10px; color: #7c8699;
+              line-height: 1.45; }
+      button {
+        width: 100%; padding: 10px; border: 0; border-radius: 8px;
+        background: #3987e5; color: #fff; font: 600 13px system-ui;
+        cursor: pointer;
+      }
+      button.stop { background: #d03b3b; }
+      button:disabled { opacity: .6; cursor: default; }
+      .status { margin-top: 12px; font-size: 11px; color: #b9c2d4;
+                line-height: 1.5; word-break: break-all; }
+      .err { color: #d03b3b; }
+      .ok { color: #0ca30c; }
+      code { font-size: 10px; }
+
+      .copyRow { display: none; margin-top: 10px; gap: 6px; }
+      .copyRow.show { display: flex; }
+      .copyRow input {
+        margin-bottom: 0; font-size: 11px; color: #b9c2d4;
+        font-family: ui-monospace, "SF Mono", monospace;
+      }
+      .copyBtn {
+        width: auto; flex-shrink: 0; padding: 8px 12px; font-size: 12px;
+        background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+      }
+      .copyBtn.copied { background: #0ca30c; border-color: #0ca30c; }
+    </style>
+  </head>
+  <body>
+    <div class="brand">
+      <img src="icons/48.png" alt="">
+      <h1>TrueCandidate Observer</h1>
+    </div>
+    <p class="sub">Reads this Meet's captions. No bot joins the call.</p>
+
+    <label for="api">Backend URL</label>
+    <input type="text" id="api" placeholder="http://localhost:8000">
+
+    <label for="selfName">Your name as it appears in Meet</label>
+    <input type="text" id="selfName" placeholder="Rachel Kim">
+    <p class="hint">
+      Meet labels your own captions "You" - this tells TrueCandidate who that is.
+    </p>
+
+    <label for="candidates">Expected candidates (comma-separated)</label>
+    <input type="text" id="candidates" placeholder="Priya Sharma, Arjun Mehta">
+
+    <label for="interviewers">Interviewers (comma-separated)</label>
+    <input type="text" id="interviewers" placeholder="Rachel Kim">
+    <p class="hint">
+      Interviewers are excluded from candidate scoring. Testing solo? Leave
+      this blank and put your own name in <em>candidates</em> to watch your
+      score climb.
+    </p>
+
+    <button type="button" id="toggle">Start observing</button>
+
+    <div class="copyRow" id="copyRow">
+      <input type="text" id="sessionIdBox" readonly>
+      <button type="button" class="copyBtn" id="copyBtn">Copy</button>
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

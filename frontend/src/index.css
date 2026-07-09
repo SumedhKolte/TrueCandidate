@@ -1,0 +1,125 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-page text-ink font-sans antialiased;
+  overflow-x: hidden;
+}
+
+/* ---------------------------------------------------------------------------
+   Cinematic ambient background: two slow-drifting aurora blobs + a fine grid.
+   Pure CSS so it costs ~0 JS; `will-change` keeps it on the compositor.
+--------------------------------------------------------------------------- */
+.ambient {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(57, 135, 229, 0.12), transparent),
+    #070d1a;
+}
+.ambient::before,
+.ambient::after {
+  content: "";
+  position: absolute;
+  width: 60vw;
+  height: 60vw;
+  border-radius: 50%;
+  filter: blur(120px);
+  opacity: 0.14;
+  will-change: transform;
+}
+.ambient::before {
+  background: #3987e5;
+  top: -20vw;
+  left: -15vw;
+  animation: drift-a 26s ease-in-out infinite alternate;
+}
+.ambient::after {
+  background: #9085e9;
+  bottom: -25vw;
+  right: -15vw;
+  animation: drift-b 32s ease-in-out infinite alternate;
+}
+@keyframes drift-a {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(12vw, 8vh) scale(1.15); }
+}
+@keyframes drift-b {
+  from { transform: translate(0, 0) scale(1.1); }
+  to   { transform: translate(-10vw, -6vh) scale(0.95); }
+}
+
+/* Fine blueprint grid over the page plane */
+.grid-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 90% 70% at 50% 20%, black, transparent);
+}
+
+/* Glass panels */
+.panel {
+  @apply rounded-2xl border border-edge;
+  background: linear-gradient(180deg, rgba(20, 30, 52, 0.75), rgba(14, 22, 38, 0.65));
+  backdrop-filter: blur(14px);
+  box-shadow: 0 20px 60px -30px rgba(0, 0, 0, 0.8);
+}
+
+/* Live pulse dot */
+.pulse-dot {
+  position: relative;
+}
+.pulse-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: inherit;
+  animation: pulse-ring 2s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+}
+@keyframes pulse-ring {
+  0%   { transform: scale(1);   opacity: 0.7; }
+  100% { transform: scale(3.2); opacity: 0; }
+}
+
+/* Leader card glow sweep */
+.leader-glow {
+  position: relative;
+  overflow: hidden;
+}
+.leader-glow::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 30%, rgba(57, 135, 229, 0.12) 50%, transparent 70%);
+  transform: translateX(-100%);
+  animation: sheen 4.5s ease-in-out infinite;
+}
+@keyframes sheen {
+  0%, 60% { transform: translateX(-100%); }
+  100%    { transform: translateX(100%); }
+}
+
+/* Recharts chrome: recessive grid/axes so the data stays loudest */
+.recharts-cartesian-axis-tick text {
+  fill: #7c8699;
+  font-size: 11px;
+}
+
+/* Respect users who opt out of motion */
+@media (prefers-reduced-motion: reduce) {
+  .ambient::before, .ambient::after, .pulse-dot::after, .leader-glow::before {
+    animation: none;
+  }
+}

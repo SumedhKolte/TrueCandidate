@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.env
+venv/
+backend/venv/
+node_modules/
+dist/
+.vercel/
+# Signed-in Chrome profile for the Meet bot — contains live session cookies.
+bot_profile/
+backend/bot_profile/
