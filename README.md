@@ -314,5 +314,4 @@ extension/                                    Chrome extension capture layer
 frontend/src/hooks/useTrueCandidateSession.js Realtime subscription + ledger replay
 frontend/src/components/                      gauge · roster · timeline · explanation feed
 ```
-#   T r u e C a n d i d a t e  
- 
+#
