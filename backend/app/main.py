@@ -22,7 +22,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import db
+from . import db, state
 from .adapters import recall
 from .config import get_settings
 from .models import LaunchRequest, PlatformEvent, TranscriptChunk
@@ -51,6 +51,7 @@ async def _sweeper() -> None:
     interval = get_settings().sweep_interval_s
     while True:
         try:
+            state.prune_stale()
             await passive.sweep()
             await probing.sweep()
         except Exception:

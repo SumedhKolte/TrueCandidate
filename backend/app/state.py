@@ -56,19 +56,39 @@ class SessionState:
     greeting: GreetingWindow | None = None
     ambiguous_since: float | None = None     # for Active Probing
     last_probe_at: float | None = None
+    last_activity: float = field(default_factory=time.monotonic)
 
     def participant(self, platform_id: str) -> ParticipantState | None:
         return self.participants.get(platform_id)
 
+    def touch(self) -> None:
+        self.last_activity = time.monotonic()
+
 
 _sessions: dict[str, SessionState] = {}
+
+# Every meeting ever observed by this process otherwise lives in _sessions
+# forever: nothing ever removes a finished session, so the background sweep
+# (passive.sweep / probing.sweep, every ~20s) keeps hitting Supabase and Groq
+# for sessions nobody is watching anymore. Prune anything idle this long.
+STALE_AFTER_S = 30 * 60
 
 
 def session(session_id: str) -> SessionState:
     if session_id not in _sessions:
         _sessions[session_id] = SessionState(session_id=session_id)
-    return _sessions[session_id]
+    ss = _sessions[session_id]
+    ss.touch()
+    return ss
 
 
 def all_sessions() -> list[SessionState]:
     return list(_sessions.values())
+
+
+def prune_stale() -> None:
+    now = time.monotonic()
+    stale = [sid for sid, ss in _sessions.items()
+             if now - ss.last_activity > STALE_AFTER_S]
+    for sid in stale:
+        del _sessions[sid]
