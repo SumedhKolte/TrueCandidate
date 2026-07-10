@@ -37,11 +37,13 @@
   const FINALIZE_AFTER_MS = 2000; // caption text stable this long => final
   const WPM_MS = 400; // rough per-word duration
   const MAX_ROOT_TEXT = 2000; // reject a "caption root" that is really the app shell
+  const SCAN_CAP = 250; // max elements the fallback scan will touch per tick
 
   const state = {
     apiUrl: null,
     sessionId: null,
     selfName: null, // what to call the "You" speaker
+    knownNames: new Set(), // candidates + interviewers + self, lowercased
     observing: false,
     buffer: new Map(), // speaker -> { text, changedAt }
     posted: new Map(), // speaker -> full text already sent
@@ -92,6 +94,12 @@
 
   // -------------------------------------------------------------------------
   // Caption root discovery — ordered strategies, most specific first.
+  //
+  // A candidate only WINS if its text actually parses into speaker/text pairs.
+  // Checking "has some text" is not enough: Meet has decoy elements (a bare
+  // "Captions" label, a jsname wrapper) that match a selector, contain text,
+  // and yield nothing — the scraper then sits at 0 chunks forever without a
+  // single error. Parseability is the real test, so that is what we test.
   // -------------------------------------------------------------------------
   const STRATEGIES = [
     ["jsname", () => document.querySelector('div[jsname="dsyhDe"]')],
@@ -114,11 +122,55 @@
         )[0];
       },
     ],
+    [
+      "scan-parseable",
+      () => {
+        // Last resort: sweep the plausible containers and return the first one
+        // whose text genuinely parses as captions. Survives Meet renaming its
+        // classes and jsnames, which it does regularly.
+        //
+        // Bounded on purpose: this runs every tick until a root is found, and
+        // `innerText` forces layout. Gate on `textContent` (no layout) first,
+        // and cap how many elements we are willing to touch.
+        const candidates = document.querySelectorAll(
+          '[aria-live], div[jsname], div[role="region"]',
+        );
+        let examined = 0;
+        for (const el of candidates) {
+          if (examined >= SCAN_CAP) break;
+          const rough = el.textContent || "";
+          if (!rough.trim() || rough.length > MAX_ROOT_TEXT) continue;
+          examined += 1;
+          if (looksLikeCaptions(parseLines(el.innerText))) return el;
+        }
+        return null;
+      },
+    ],
   ];
 
-  function isPlausibleRoot(el) {
+  /** Cheap size gate: a caption box holds a few lines, never the whole app shell. */
+  function sizeOk(el) {
     const text = (el?.innerText || "").trim();
     return Boolean(text) && text.length <= MAX_ROOT_TEXT;
+  }
+
+  /**
+   * The real test: does this element yield pairs that actually look like
+   * captions? Merely yielding a pair is not enough — a two-line UI decoy such
+   * as "Captions / Settings" parses into one pair and would otherwise win.
+   * A genuine pair names a speaker we know, or carries sentence-like text.
+   */
+  function looksLikeCaptions(entries) {
+    return entries.some(
+      ([who, text]) =>
+        who === "You" ||
+        state.knownNames.has(who.toLowerCase()) ||
+        text.split(/\s+/).length >= 3,
+    );
+  }
+
+  function isPlausibleRoot(el) {
+    return sizeOk(el) && looksLikeCaptions(parseLines(el.innerText));
   }
 
   let cachedRoot = null;
@@ -136,13 +188,17 @@
       if (isPlausibleRoot(el)) {
         if (state.rootStrategy !== name) {
           state.rootStrategy = name;
-          console.info(`[TrueCandidate] caption root found via "${name}"`);
+          console.info(
+            `[TrueCandidate] caption root found via "${name}" — ` +
+              `${parseLines(el.innerText).length} caption line(s) parsed`,
+          );
         }
         cachedRoot = el;
         return el;
       }
     }
     cachedRoot = null;
+    state.rootStrategy = null;
     return null;
   }
 
@@ -151,18 +207,31 @@
     return root ? root.innerText : null;
   }
 
-  /** Meet renders a speaker name on its own line, then that speaker's text. */
+  /**
+   * Meet renders a speaker name on its own line, then that speaker's text.
+   *
+   * The names typed into the popup (candidates, interviewers, your own) are the
+   * strongest evidence available, so check those first. The shape heuristic is
+   * only the fallback — on its own it happily mistakes a short caption line
+   * like "Guys are here" for a speaker name and splits the transcript wrong.
+   */
+  function isSpeakerLine(line) {
+    if (line === "You" || state.knownNames.has(line.toLowerCase())) return true;
+    return (
+      line.length <= 40 &&
+      !/[.!?,]$/.test(line) &&
+      line.split(/\s+/).length <= 4 &&
+      line[0] === line[0].toUpperCase()
+    );
+  }
+
   function parseLines(raw) {
     const lines = raw.split("\n").map((l) => l.trim()).filter(Boolean);
     const out = [];
     let current = null;
     let buf = [];
     for (const line of lines) {
-      const looksLikeName =
-        line.length <= 40 &&
-        !/[.!?,]$/.test(line) &&
-        line.split(/\s+/).length <= 4 &&
-        (line[0] === line[0].toUpperCase() || line === "You");
+      const looksLikeName = isSpeakerLine(line);
       if (looksLikeName && (current === null || buf.length)) {
         if (current && buf.length) out.push([current, buf.join(" ")]);
         current = line;
@@ -238,12 +307,22 @@
       }
     } else {
       state.missTicks += 1;
+      // Dump the diagnostic automatically. `window.__trueCandidateDebug` lives
+      // in the content script's ISOLATED world, so the page console cannot see
+      // it unless you switch the DevTools context — don't make the user find
+      // that out the hard way when the scraper is already failing.
       if (state.missTicks === 25) {
         console.warn(
-          "[TrueCandidate] No caption container found after ~15s. Turn on captions " +
-            "(CC) in Meet. If they ARE on, Google changed the DOM — run " +
-            "window.__trueCandidateDebug() and patch findCaptionRoot().",
+          "[TrueCandidate] No parseable caption container after ~15s. " +
+            "Turn on captions (CC) in Meet and have someone speak. If captions " +
+            "ARE visible, Google changed the DOM — the report below shows what " +
+            "each discovery strategy sees; patch findCaptionRoot() accordingly.",
         );
+        try {
+          console.warn("[TrueCandidate] diagnostic", window.__trueCandidateDebug());
+        } catch {
+          /* never let diagnostics break the scraper */
+        }
       }
     }
 
@@ -388,6 +467,15 @@
     state.sessionId = cfg.sessionId ?? state.sessionId;
     state.selfName = (cfg.selfName ?? "").trim() || state.selfName;
     state.observing = Boolean(cfg.observing && state.apiUrl && state.sessionId);
+
+    // Names we can trust as speaker labels when parsing the caption block.
+    state.knownNames = new Set(
+      [cfg.selfName, ...(cfg.candidates ?? "").split(","),
+       ...(cfg.interviewers ?? "").split(",")]
+        .map((n) => (n ?? "").trim().toLowerCase())
+        .filter(Boolean),
+    );
+
     state.missTicks = 0;
     state.lastError = null;
     paintBadge();
@@ -415,7 +503,9 @@
   // Let a future injection shut this instance down cleanly (see top of file).
   window.__trueCandidateStop = () => stop("replaced");
 
-  const KEYS = ["apiUrl", "sessionId", "observing", "selfName"];
+  const KEYS = [
+    "apiUrl", "sessionId", "observing", "selfName", "candidates", "interviewers",
+  ];
   chrome.storage.local.get(KEYS, applyConfig);
   chrome.storage.onChanged.addListener(() => {
     if (!contextAlive()) return stop("context-invalidated");
