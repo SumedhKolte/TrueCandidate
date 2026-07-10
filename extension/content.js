@@ -35,6 +35,7 @@
 
   const POLL_MS = 600;
   const FINALIZE_AFTER_MS = 2000; // caption text stable this long => final
+  const MAX_PENDING_MS = 6000; // flush a continuous talker at least this often
   const WPM_MS = 400; // rough per-word duration
   const MAX_ROOT_TEXT = 2000; // reject a "caption root" that is really the app shell
   const SCAN_CAP = 250; // max elements the fallback scan will touch per tick
@@ -302,7 +303,14 @@
         seen.add(speaker);
         const prev = state.buffer.get(speaker);
         if (!prev || prev.text !== text) {
-          state.buffer.set(speaker, { text, changedAt: now });
+          state.buffer.set(speaker, {
+            text,
+            changedAt: now,
+            // When this speaker's unflushed text FIRST appeared. Unlike
+            // changedAt this does not reset on every rewrite, so it bounds how
+            // long a continuous talker can go without being flushed.
+            pendingSince: prev?.pendingSince ?? now,
+          });
         }
       }
     } else {
@@ -326,8 +334,15 @@
       }
     }
 
-    for (const [speaker, { text, changedAt }] of [...state.buffer]) {
-      if (now - changedAt >= FINALIZE_AFTER_MS || !seen.has(speaker)) {
+    for (const [speaker, { text, changedAt, pendingSince }] of [...state.buffer]) {
+      const settled = now - changedAt >= FINALIZE_AFTER_MS; // they paused
+      const gone = !seen.has(speaker); // their line scrolled away
+      // Meet rewrites the active speaker's line on every tick, so `settled`
+      // never fires while someone talks continuously. Without this bound, a
+      // monologue is buffered forever and nothing is ever sent.
+      const overdue = now - pendingSince >= MAX_PENDING_MS;
+
+      if (settled || gone || overdue) {
         state.buffer.delete(speaker);
         const fresh = deltaText(state.posted.get(speaker), text);
         if (fresh) {

@@ -40,6 +40,13 @@ async def _ask(
     """Fire one JSON-mode completion under the hard latency budget."""
     s = get_settings()
     budget = timeout_s if timeout_s is not None else s.groq_timeout_s
+
+    # Groq rejects response_format=json_object unless the word "json" appears
+    # somewhere in the messages (400 invalid_request_error). Enforce it here
+    # rather than trusting every prompt author to remember.
+    if "json" not in f"{system}{user}".lower():
+        system = f"{system}\nRespond with JSON only."
+
     try:
         resp = await asyncio.wait_for(
             _client().chat.completions.create(
@@ -113,7 +120,7 @@ async def check_contradiction(prior: list[str], new_claim: str) -> dict[str, Any
 _PROBE_SYSTEM = (
     "You help an interviewer verify which meeting participants are the real "
     "candidates. Given the unresolved candidate name(s) and the participants "
-    "with their observed evidence, reply ONLY "
+    "with their observed evidence, reply ONLY minified JSON: "
     '{"p":"<one short, natural question the interviewer should ask, addressed '
     'to an unresolved candidate by name, designed so only the real candidate '
     "answers fluently>\"}"
