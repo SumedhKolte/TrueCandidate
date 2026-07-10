@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 
+const LIVE_REFRESH_MS = 750;
+
 /**
  * Live session state via Supabase Realtime.
  *
@@ -20,7 +22,7 @@ export function useTrueCandidateSession(sessionId) {
     if (!sessionId) return;
     let cancelled = false;
 
-    (async () => {
+    const load = async () => {
       const [s, p, sig, cand] = await Promise.all([
         supabase.from("interview_sessions").select("*").eq("id", sessionId).single(),
         supabase.from("live_participants").select("*").eq("session_id", sessionId),
@@ -36,7 +38,10 @@ export function useTrueCandidateSession(sessionId) {
       setParticipants(p.data ?? []);
       setSignals(sig.data ?? []);
       setCandidates(cand.data ?? []);
-    })();
+    };
+
+    load();
+    const refreshTimer = setInterval(load, LIVE_REFRESH_MS);
 
     const channel = supabase
       .channel(`truecandidate:${sessionId}`)
@@ -78,6 +83,7 @@ export function useTrueCandidateSession(sessionId) {
 
     return () => {
       cancelled = true;
+      clearInterval(refreshTimer);
       supabase.removeChannel(channel);
     };
   }, [sessionId]);

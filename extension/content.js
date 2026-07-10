@@ -33,11 +33,16 @@
     }
   }
 
-  const POLL_MS = 600;
-  const FINALIZE_AFTER_MS = 2000; // caption text stable this long => final
-  const MAX_PENDING_MS = 6000; // flush a continuous talker at least this often
+  const POLL_MS = 250;
+  const FINALIZE_AFTER_MS = 700; // caption text stable this long => final
+  const MAX_PENDING_MS = 1500; // flush a continuous talker at least this often
   const WPM_MS = 400; // rough per-word duration
-  const MAX_ROOT_TEXT = 2000; // reject a "caption root" that is really the app shell
+  // Reject a "caption root" that is really the app shell. Generous on purpose:
+  // Meet's caption region is a ROLLING transcript that grows past 2000 chars in
+  // a long conversation, and a too-tight cap made the real container fail
+  // validation mid-call (captions "lost" after the first minutes). The page
+  // shell is far larger than this, so the gate still holds.
+  const MAX_ROOT_TEXT = 8000;
   const SCAN_CAP = 250; // max elements the fallback scan will touch per tick
 
   const state = {
@@ -126,9 +131,11 @@
     [
       "scan-parseable",
       () => {
-        // Last resort: sweep the plausible containers and return the first one
-        // whose text genuinely parses as captions. Survives Meet renaming its
-        // classes and jsnames, which it does regularly.
+        // Last resort: sweep plausible caption-ish nodes and choose the BEST
+        // parseable container, not the first parseable node. Meet often renders
+        // each utterance as its own div[jsname]; grabbing that inner block gives
+        // exactly one chunk, then silence forever while new speech appears in
+        // sibling nodes the cached root never sees.
         //
         // Bounded on purpose: this runs every tick until a root is found, and
         // `innerText` forces layout. Gate on `textContent` (no layout) first,
@@ -137,14 +144,28 @@
           '[aria-live], div[jsname], div[role="region"]',
         );
         let examined = 0;
+        let best = null;
+        const seen = new Set();
+        const consider = (node) => {
+          if (!node || seen.has(node)) return;
+          seen.add(node);
+          const rough = node.textContent || "";
+          if (!rough.trim() || rough.length > MAX_ROOT_TEXT) return;
+          const hit = scoreCaptionRoot(node);
+          if (hit && (!best || hit.score > best.score)) best = hit;
+        };
         for (const el of candidates) {
           if (examined >= SCAN_CAP) break;
           const rough = el.textContent || "";
           if (!rough.trim() || rough.length > MAX_ROOT_TEXT) continue;
           examined += 1;
-          if (looksLikeCaptions(parseLines(el.innerText))) return el;
+          let node = el;
+          for (let hops = 0; node && node !== document.body && hops < 5; hops += 1) {
+            consider(node);
+            node = node.parentElement;
+          }
         }
-        return null;
+        return best?.el ?? null;
       },
     ],
   ];
@@ -167,26 +188,53 @@
    * popup, so the moment anyone known speaks with captions on, the real
    * region qualifies — and nothing else ever does.
    */
+  function isKnownCaptionSpeaker(who) {
+    const name = resolveSpeaker(who);
+    return (
+      who === "You" ||
+      state.knownNames.has(who.toLowerCase()) ||
+      state.knownNames.has(name.toLowerCase())
+    );
+  }
+
   function looksLikeCaptions(entries) {
-    return entries.some(([who]) => {
-      const name = resolveSpeaker(who);
-      return (
-        who === "You" ||
-        state.knownNames.has(who.toLowerCase()) ||
-        state.knownNames.has(name.toLowerCase())
-      );
-    });
+    return entries.some(([who]) => isKnownCaptionSpeaker(who));
   }
 
   function isPlausibleRoot(el) {
     return sizeOk(el) && looksLikeCaptions(parseLines(el.innerText));
   }
 
+  function scoreCaptionRoot(el) {
+    if (!sizeOk(el)) return null;
+    const text = (el.innerText || "").trim();
+    const entries = parseLines(text);
+    if (!looksLikeCaptions(entries)) return null;
+
+    const knownEntries = entries.filter(([who]) => isKnownCaptionSpeaker(who)).length;
+    const speakers = new Set(entries.map(([who]) => resolveSpeaker(who).toLowerCase()));
+    const textLength = text.length;
+    return {
+      el,
+      entries,
+      textLength,
+      score:
+        knownEntries * 100000 +
+        Math.min(entries.length, 8) * 5000 +
+        speakers.size * 500 +
+        Math.min(textLength, MAX_ROOT_TEXT),
+    };
+  }
+
   let cachedRoot = null;
+  let cachedRootStrategy = null;
   function findCaptionRoot() {
-    if (cachedRoot && document.contains(cachedRoot) && isPlausibleRoot(cachedRoot)) {
-      return cachedRoot;
-    }
+    const cached = cachedRoot && document.contains(cachedRoot)
+      ? scoreCaptionRoot(cachedRoot)
+      : null;
+    const provisionalFallback =
+      cachedRootStrategy === "scan-parseable" && (!cached || cached.entries.length < 2);
+    if (cached && !provisionalFallback) return cachedRoot;
     for (const [name, fn] of STRATEGIES) {
       let el = null;
       try {
@@ -194,19 +242,22 @@
       } catch {
         /* strategy threw on a weird DOM — try the next one */
       }
-      if (isPlausibleRoot(el)) {
+      const hit = scoreCaptionRoot(el);
+      if (hit) {
         if (state.rootStrategy !== name) {
           state.rootStrategy = name;
           console.info(
             `[TrueCandidate] caption root found via "${name}" — ` +
-              `${parseLines(el.innerText).length} caption line(s) parsed`,
+              `${hit.entries.length} caption line(s) parsed`,
           );
         }
         cachedRoot = el;
+        cachedRootStrategy = name;
         return el;
       }
     }
     cachedRoot = null;
+    cachedRootStrategy = null;
     state.rootStrategy = null;
     return null;
   }
@@ -432,6 +483,7 @@
       selfName: state.selfName,
       chunksPosted: state.chunks,
       rootStrategy: state.rootStrategy,
+      cachedRootStrategy,
       rootFound: Boolean(findCaptionRoot()),
       strategies: STRATEGIES.map(([name, fn]) => {
         let hit = null;
@@ -440,9 +492,13 @@
         } catch {
           /* ignore */
         }
+        const scored = scoreCaptionRoot(hit);
         return {
           name,
           matched: Boolean(hit),
+          plausible: Boolean(scored),
+          parsedLines: scored?.entries.length ?? 0,
+          score: scored?.score ?? 0,
           textLength: hit ? (hit.innerText || "").length : 0,
           textPreview: hit ? (hit.innerText || "").slice(0, 120) : null,
         };

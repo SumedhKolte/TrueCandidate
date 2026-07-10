@@ -67,6 +67,7 @@ async def emit_signal(
         return
     r = await client().post(
         "/participant_signals",
+        headers={"Prefer": "return=minimal"},
         json={
             "session_id": session_id,
             "participant_id": participant_id,
@@ -167,7 +168,10 @@ async def get_candidates(session_id: str) -> list[dict[str, Any]]:
 
 async def patch_candidate(candidate_id: str, **fields: Any) -> None:
     r = await client().patch(
-        "/session_candidates", params={"id": f"eq.{candidate_id}"}, json=fields
+        "/session_candidates",
+        params={"id": f"eq.{candidate_id}"},
+        headers={"Prefer": "return=minimal"},
+        json=fields,
     )
     r.raise_for_status()
 
@@ -185,6 +189,7 @@ async def patch_session_ambiguity(session_id: str, ambiguity: dict[str, Any]) ->
     r = await client().patch(
         "/interview_sessions",
         params={"id": f"eq.{session_id}"},
+        headers={"Prefer": "return=minimal"},
         json={"ambiguity": ambiguity},
     )
     r.raise_for_status()
@@ -192,6 +197,9 @@ async def patch_session_ambiguity(session_id: str, ambiguity: dict[str, Any]) ->
 
 async def patch_participant(participant_id: str, **fields: Any) -> None:
     r = await client().patch(
-        "/live_participants", params={"id": f"eq.{participant_id}"}, json=fields
+        "/live_participants",
+        params={"id": f"eq.{participant_id}"},
+        headers={"Prefer": "return=minimal"},
+        json=fields,
     )
     r.raise_for_status()

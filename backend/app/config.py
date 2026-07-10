@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     passive_observer_after_s: int = 180      # 3 min silent + cam off => penalty
     greeting_response_window_s: int = 15     # who answers "Hi <name>" counts
     probe_after_ambiguous_s: int = 300       # 5 min stuck at 50/50 => probe
-    sweep_interval_s: int = 20               # background heuristic cadence
+    sweep_interval_s: int = 2                # background heuristic cadence
 
 
 @lru_cache
