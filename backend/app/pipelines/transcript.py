@@ -22,7 +22,7 @@ from .. import db, groq_client, state
 from ..config import get_settings
 from ..models import TranscriptChunk
 from ..signals import weight_of
-from .events import ensure_participant
+from .events import ensure_participant, is_ui_junk
 from .narrative_ledger import process_claims
 
 log = logging.getLogger("truecandidate.transcript")
@@ -34,6 +34,12 @@ _GREETING = re.compile(
 
 
 async def handle_chunk(chunk: TranscriptChunk) -> None:
+    # A mis-targeted caption scraper can attribute speech to Meet UI chrome
+    # ("Stop presenting", the clock). Never let those become participants.
+    if is_ui_junk(chunk.display_name):
+        log.info("dropping chunk from UI-junk name %r", chunk.display_name)
+        return
+
     ss = state.session(chunk.session_id)
     # Register on first sighting with full interviewer/roster detection. The
     # Chrome extension sends no join events, so this is the ONLY registration

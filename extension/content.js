@@ -157,17 +157,25 @@
 
   /**
    * The real test: does this element yield pairs that actually look like
-   * captions? Merely yielding a pair is not enough — a two-line UI decoy such
-   * as "Captions / Settings" parses into one pair and would otherwise win.
-   * A genuine pair names a speaker we know, or carries sentence-like text.
+   * captions? A genuine caption pair is attributed to a speaker we KNOW —
+   * "You", or a name typed into the popup (self, candidates, interviewers).
+   *
+   * The earlier "any pair with 3+ words" fallback is exactly what let Meet's
+   * control bar win in production ("Stop presenting", "Meeting details" and
+   * the clock became participants with baseline-50 scores). Requiring a known
+   * speaker is strict, but safe: the observer's own name is mandatory in the
+   * popup, so the moment anyone known speaks with captions on, the real
+   * region qualifies — and nothing else ever does.
    */
   function looksLikeCaptions(entries) {
-    return entries.some(
-      ([who, text]) =>
+    return entries.some(([who]) => {
+      const name = resolveSpeaker(who);
+      return (
         who === "You" ||
         state.knownNames.has(who.toLowerCase()) ||
-        text.split(/\s+/).length >= 3,
-    );
+        state.knownNames.has(name.toLowerCase())
+      );
+    });
   }
 
   function isPlausibleRoot(el) {
@@ -209,6 +217,40 @@
   }
 
   /**
+   * Things that pass the "short Title Case line" shape test but are Meet UI,
+   * not people. These showed up as literal participants in production
+   * ("Stop presenting", "Meeting details", the clock, the participant count)
+   * because a fallback root captured the control bar. Filter them everywhere a
+   * speaker name is accepted, so even a bad root can't invent participants.
+   */
+  const UI_JUNK = [
+    /^stop presenting$/i,
+    /^you'?re presenting/i,
+    /^present(ing| now)?$/i,
+    /^meeting details$/i,
+    /^take notes with gemini$/i,
+    /^gemini$/i,
+    /^meeting records$/i,
+    /^captions?$/i,
+    /^turn (on|off) captions?$/i,
+    /^jump to bottom$/i,
+    /^leave call$/i,
+    /^more options$/i,
+    /^people$/i,
+    /^chat$/i,
+    /^activities$/i,
+    /^host controls$/i,
+    /^backgrounds? and effects$/i,
+    /^\d{1,2}[:.]\d{2}(\s?(am|pm))?$/i, // clock ("3:11", "9:42 PM")
+    /^\d+$/, // bare counters (participant count)
+    /^[+•·|]+$/,
+  ];
+
+  function isJunkName(line) {
+    return UI_JUNK.some((re) => re.test(line.trim()));
+  }
+
+  /**
    * Meet renders a speaker name on its own line, then that speaker's text.
    *
    * The names typed into the popup (candidates, interviewers, your own) are the
@@ -218,6 +260,7 @@
    */
   function isSpeakerLine(line) {
     if (line === "You" || state.knownNames.has(line.toLowerCase())) return true;
+    if (isJunkName(line)) return false;
     return (
       line.length <= 40 &&
       !/[.!?,]$/.test(line) &&
@@ -249,9 +292,16 @@
    * Meet labels the local user's captions "You". Map that to the name the
    * interviewer gave us, so their turns still feed the greeting detector —
    * dropping them silently used to make a solo test look completely dead.
+   *
+   * Also normalize tile-style labels: "Sumedh Kolte (You, presenting)" is the
+   * same person as "Sumedh Kolte", not a second participant.
    */
   function resolveSpeaker(raw) {
-    return raw === "You" ? state.selfName || "You" : raw;
+    let name = raw.replace(/\s*\((you|presenting|host)[^)]*\)\s*$/i, "").trim();
+    if (name === "You" || /\(you\b/i.test(raw)) {
+      name = state.selfName || "You";
+    }
+    return name || raw;
   }
 
   /**
@@ -300,6 +350,7 @@
       state.missTicks = 0;
       for (const [rawSpeaker, text] of parseLines(raw)) {
         const speaker = resolveSpeaker(rawSpeaker);
+        if (isJunkName(speaker)) continue; // never invent a UI-label participant
         seen.add(speaker);
         const prev = state.buffer.get(speaker);
         if (!prev || prev.text !== text) {
@@ -355,7 +406,7 @@
     // Screen share: Meet surfaces "<name> is presenting" in the UI.
     const body = document.body.innerText.slice(0, 4000);
     const m = body.match(/^(.{2,40}?) is presenting$/m);
-    const current = m ? m[1].trim() : null;
+    const current = m && !isJunkName(m[1].trim()) ? m[1].trim() : null;
     if (current && current !== state.presenter && current !== "You") {
       state.presenter = current;
       await post("/webhook/events", {

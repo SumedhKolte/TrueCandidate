@@ -8,6 +8,7 @@ part of the "ensemble of weak signals" philosophy: fast/dumb + slow/smart.
 """
 from __future__ import annotations
 
+import logging
 import re
 import time
 from difflib import SequenceMatcher
@@ -16,6 +17,8 @@ from .. import db, state
 from ..signals import weight_of
 from .diarization import check_lip_sample
 
+log = logging.getLogger("truecandidate.events")
+
 # Device/room names that platforms assign when a human never typed a name.
 _GENERIC_NAME = re.compile(
     r"^(macbook( pro| air)?|iphone|ipad|galaxy|pixel|user\d*|guest\d*|"
@@ -23,12 +26,34 @@ _GENERIC_NAME = re.compile(
     re.IGNORECASE,
 )
 
+# Meet UI chrome that a mis-targeted caption scraper can mistake for speakers
+# ("Stop presenting", "Meeting details", the clock, bare counters). The
+# extension filters these client-side, but the server must not trust every
+# capture layer to be current — junk participants poison the whole session.
+_UI_JUNK = re.compile(
+    r"^(stop presenting|you'?re presenting.*|present(ing| now)?|"
+    r"meeting details|take notes with gemini|gemini|meeting records|"
+    r"captions?|turn (on|off) captions?|jump to bottom|leave call|"
+    r"more options|people|chat|activities|host controls|"
+    r"backgrounds? and effects|"
+    r"\d{1,2}[:.]\d{2}(\s?(am|pm))?|"   # clock
+    r"\d+)$",                            # bare counters
+    re.IGNORECASE,
+)
+
+
+def is_ui_junk(display_name: str) -> bool:
+    return bool(_UI_JUNK.match(display_name.strip()))
+
 
 def _name_similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower().strip(), b.lower().strip()).ratio()
 
 
 async def handle_event(ev) -> None:
+    if is_ui_junk(ev.display_name):
+        log.info("dropping event from UI-junk name %r", ev.display_name)
+        return
     ss = state.session(ev.session_id)
     ps = ss.participant(ev.platform_participant_id)
 
